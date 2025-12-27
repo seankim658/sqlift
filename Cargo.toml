@@ -1,0 +1,31 @@
+[package]
+name = "sqlift"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+postgres = ["dep:postgres"]
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+dotenvy = "0.15"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+minijinja = "2"
+
+# Database drivers
+postgres = { version = "0.19", optional = true }
+
+[dev-dependencies]
+
+[[bin]]
+name = "sqlift"
+path = "src/main.rs"
+
+[lib]
+name = "sqlift"
+path = "src/lib.rs"
+
