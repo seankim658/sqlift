@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use tracing::{debug, error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
-use sqlift::codegen::{CodeGenConfig, FunctionStyle, OutputMode};
+use sqlift::codegen::{CodeGenConfig, CodeGenerator, FunctionStyle, OutputMode, PythonGenerator};
 use sqlift::config::DbConfig;
 use sqlift::introspect::{Introspector, TableFilter};
 use sqlift::schema::Schema;
@@ -164,8 +164,10 @@ fn run() -> Result<()> {
         .with_function_style(cli.style.into());
     debug!(codegen_config = ?codegen_config, "Code generation config");
 
-    // TODO: Code generation
-    info!("Code generation not yet implemented");
+    // Generate code based on target language
+    generate_code(&cli.language, &schema, &codegen_config)?;
+
+    info!("Code generation complete");
 
     Ok(())
 }
@@ -194,6 +196,18 @@ fn introspect_database(
     match database {
         Database::Postgres => introspect_postgres(config, schema_name, filter),
     }
+}
+
+fn generate_code(language: &Language, schema: &Schema, config: &CodeGenConfig) -> Result<()> {
+    match language {
+        Language::Python => {
+            let generator = PythonGenerator::new();
+            generator
+                .generate(schema, config)
+                .context("Python code generation failed")?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(feature = "postgres")]

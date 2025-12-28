@@ -7,6 +7,10 @@ use std::path::PathBuf;
 
 use crate::prelude::{Schema, SqliftError};
 
+pub mod python;
+
+pub use python::PythonGenerator;
+
 /// Output mode for generated code
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum OutputMode {

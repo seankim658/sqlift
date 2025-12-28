@@ -2,7 +2,7 @@ use postgres::Client;
 use tracing::{debug, error, info, trace};
 
 use super::{Introspector, TableFilter};
-use crate::prelude::SqliftError;
+use crate::error::SqliftError;
 use crate::schema::{Column, DataType, EnumType, Schema, Table};
 
 /// PostgreSQL introspector

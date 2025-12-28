@@ -16,7 +16,7 @@ pub mod prelude {
     pub use crate::config::DbConfig;
     pub use crate::error::SqliftError;
     pub use crate::introspect::{Introspector, TableFilter};
-    pub use crate::schema::{Column, DataType, EnumType, Schema, Table};
+    pub use crate::schema::{to_pascal_case, Column, DataType, EnumType, Schema, Table};
 }
 
 #[cfg(feature = "postgres")]

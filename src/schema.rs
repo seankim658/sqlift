@@ -140,6 +140,24 @@ pub struct EnumType {
     pub values: Vec<String>,
 }
 
+/// Convert snake_case to PascalCase
+///
+/// This is a shared utility used by code generators for all target languages.
+pub fn to_pascal_case(s: &str) -> String {
+    s.split('_')
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => {
+                    let first_upper = first.to_uppercase().to_string();
+                    first_upper + chars.as_str()
+                }
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

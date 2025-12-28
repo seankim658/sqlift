@@ -1,0 +1,12 @@
+"""Database enum types."""
+
+from enum import Enum
+
+{% for enum in enums %}
+
+class {{ enum.name }}(str, Enum):
+    """Enum for {{ enum.db_name }} database type."""
+{% for value in enum.values %}
+    {{ value | upper }} = "{{ value }}"
+{% endfor %}
+{% endfor %}

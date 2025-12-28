@@ -1,0 +1,6 @@
+@dataclass
+class {{ record_name }}:
+    """Record for {{ table_name }} table."""
+{% for col in columns %}
+    {{ col.name }}: {{ col.python_type }}
+{% endfor %}

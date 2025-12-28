@@ -1,0 +1,169 @@
+"""Repository class for {{ table_name }} table."""
+
+from dataclasses import dataclass
+{% for imp in imports %}
+{{ imp }}
+{% endfor %}
+from psycopg import Connection
+
+
+@dataclass
+class {{ record_name }}:
+    """Record for {{ table_name }} table."""
+{% for col in columns %}
+    {{ col.name }}: {{ col.python_type }}
+{% endfor %}
+
+
+class {{ class_name }}Repository:
+    """Repository for {{ table_name }} operations."""
+
+    def __init__(self, conn: Connection) -> None:
+        self.conn = conn
+
+{% if has_pk %}
+    def get_by_{% for col in pk_columns %}{{ col.name }}{% if not loop.last %}_and_{% endif %}{% endfor %}(
+        self,
+{% for col in pk_columns %}
+        {{ col.name }}: {{ col.base_type }},
+{% endfor %}
+    ) -> {{ record_name }} | None:
+        """Get a record by primary key."""
+        cursor = self.conn.execute(
+            "SELECT * FROM {{ table_name }} WHERE {% for col in pk_columns %}{{ col.name }} = %s{% if not loop.last %} AND {% endif %}{% endfor %}",
+            ({% for col in pk_columns %}{{ col.name }},{% endfor %}),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        return {{ record_name }}(**dict(row))
+
+{% endif %}
+    def get_all(self) -> list[{{ record_name }}]:
+        """Get all records."""
+        cursor = self.conn.execute("SELECT * FROM {{ table_name }}")
+        rows = cursor.fetchall()
+        return [{{ record_name }}(**dict(row)) for row in rows]
+
+    def insert(
+        self,
+{% for col in insert_columns %}
+        {{ col.name }}: {{ col.python_type }},
+{% endfor %}
+    ) -> {{ record_name }}:
+        """Insert a new record."""
+        cursor = self.conn.execute(
+            """
+            INSERT INTO {{ table_name }} ({% for col in insert_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %})
+            VALUES ({% for col in insert_columns %}%s{% if not loop.last %}, {% endif %}{% endfor %})
+            RETURNING *
+            """,
+            ({% for col in insert_columns %}{{ col.name }},{% endfor %}),
+        )
+        row = cursor.fetchone()
+        return {{ record_name }}(**dict(row))
+
+{% if has_pk and non_pk_columns %}
+    def update(
+        self,
+{% for col in pk_columns %}
+        {{ col.name }}: {{ col.base_type }},
+{% endfor %}
+{% for col in non_pk_columns %}
+        {{ col.name }}: {{ col.base_type }} | None = None,
+{% endfor %}
+    ) -> {{ record_name }} | None:
+        """Update a record. Only non-None fields are updated."""
+        updates = []
+        params = []
+{% for col in non_pk_columns %}
+        if {{ col.name }} is not None:
+            updates.append("{{ col.name }} = %s")
+            params.append({{ col.name }})
+{% endfor %}
+        
+        if not updates:
+            return self.get_by_{% for col in pk_columns %}{{ col.name }}{% if not loop.last %}_and_{% endif %}{% endfor %}({% for col in pk_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %})
+        
+{% for col in pk_columns %}
+        params.append({{ col.name }})
+{% endfor %}
+        
+        sql = f"""
+            UPDATE {{ table_name }}
+            SET {", ".join(updates)}
+            WHERE {% for col in pk_columns %}{{ col.name }} = %s{% if not loop.last %} AND {% endif %}{% endfor %}
+            RETURNING *
+        """
+        
+        cursor = self.conn.execute(sql, params)
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        return {{ record_name }}(**dict(row))
+
+{% endif %}
+{% if has_pk %}
+    def delete(
+        self,
+{% for col in pk_columns %}
+        {{ col.name }}: {{ col.base_type }},
+{% endfor %}
+    ) -> bool:
+        """Delete a record. Returns True if deleted."""
+        cursor = self.conn.execute(
+            "DELETE FROM {{ table_name }} WHERE {% for col in pk_columns %}{{ col.name }} = %s{% if not loop.last %} AND {% endif %}{% endfor %}",
+            ({% for col in pk_columns %}{{ col.name }},{% endfor %}),
+        )
+        return cursor.rowcount > 0
+
+{% endif %}
+{% if has_pk and not has_auto_generated_pk and non_pk_columns %}
+    def upsert(
+        self,
+{% for col in pk_columns %}
+        {{ col.name }}: {{ col.base_type }},
+{% endfor %}
+{% for col in non_pk_columns %}
+        {{ col.name }}: {{ col.base_type }} | None = None,
+{% endfor %}
+    ) -> {{ record_name }}:
+        """Insert or update a record."""
+        columns = [{% for col in pk_columns %}"{{ col.name }}", {% endfor %}]
+        values = [{% for col in pk_columns %}{{ col.name }}, {% endfor %}]
+        updates = []
+        
+{% for col in non_pk_columns %}
+        if {{ col.name }} is not None:
+            columns.append("{{ col.name }}")
+            values.append({{ col.name }})
+            updates.append("{{ col.name }} = EXCLUDED.{{ col.name }}")
+{% endfor %}
+        
+        placeholders = ", ".join(["%s"] * len(values))
+        columns_str = ", ".join(columns)
+        
+        if updates:
+            update_str = ", ".join(updates)
+            sql = f"""
+                INSERT INTO {{ table_name }} ({columns_str})
+                VALUES ({placeholders})
+                ON CONFLICT ({% for col in pk_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %}) DO UPDATE SET {update_str}
+                RETURNING *
+            """
+        else:
+            sql = f"""
+                INSERT INTO {{ table_name }} ({columns_str})
+                VALUES ({placeholders})
+                ON CONFLICT ({% for col in pk_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %}) DO NOTHING
+                RETURNING *
+            """
+        
+        cursor = self.conn.execute(sql, values)
+        row = cursor.fetchone()
+        
+        if row is None:
+            return self.get_by_{% for col in pk_columns %}{{ col.name }}{% if not loop.last %}_and_{% endif %}{% endfor %}({% for col in pk_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %})
+        
+        return {{ record_name }}(**dict(row))
+{% endif %}

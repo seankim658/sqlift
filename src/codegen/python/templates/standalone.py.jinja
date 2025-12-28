@@ -1,0 +1,170 @@
+"""Data access functions for {{ table_name }} table."""
+
+from dataclasses import dataclass
+{% for imp in imports %}
+{{ imp }}
+{% endfor %}
+from psycopg import Connection
+
+
+@dataclass
+class {{ record_name }}:
+    """Record for {{ table_name }} table."""
+{% for col in columns %}
+    {{ col.name }}: {{ col.python_type }}
+{% endfor %}
+
+
+{% if has_pk %}
+def get_{{ table_name }}_by_{% for col in pk_columns %}{{ col.name }}{% if not loop.last %}_and_{% endif %}{% endfor %}(
+    conn: Connection,
+{% for col in pk_columns %}
+    {{ col.name }}: {{ col.base_type }},
+{% endfor %}
+) -> {{ record_name }} | None:
+    """Get a {{ table_name }} record by primary key."""
+    cursor = conn.execute(
+        "SELECT * FROM {{ table_name }} WHERE {% for col in pk_columns %}{{ col.name }} = %s{% if not loop.last %} AND {% endif %}{% endfor %}",
+        ({% for col in pk_columns %}{{ col.name }},{% endfor %}),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    return {{ record_name }}(**dict(row))
+
+
+{% endif %}
+def get_all_{{ table_name }}(conn: Connection) -> list[{{ record_name }}]:
+    """Get all {{ table_name }} records."""
+    cursor = conn.execute("SELECT * FROM {{ table_name }}")
+    rows = cursor.fetchall()
+    return [{{ record_name }}(**dict(row)) for row in rows]
+
+
+def insert_{{ table_name }}(
+    conn: Connection,
+{% for col in insert_columns %}
+    {{ col.name }}: {{ col.python_type }},
+{% endfor %}
+) -> {{ record_name }}:
+    """Insert a new {{ table_name }} record."""
+    cursor = conn.execute(
+        """
+        INSERT INTO {{ table_name }} ({% for col in insert_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %})
+        VALUES ({% for col in insert_columns %}%s{% if not loop.last %}, {% endif %}{% endfor %})
+        RETURNING *
+        """,
+        ({% for col in insert_columns %}{{ col.name }},{% endfor %}),
+    )
+    row = cursor.fetchone()
+    return {{ record_name }}(**dict(row))
+
+
+{% if has_pk and non_pk_columns %}
+def update_{{ table_name }}(
+    conn: Connection,
+{% for col in pk_columns %}
+    {{ col.name }}: {{ col.base_type }},
+{% endfor %}
+{% for col in non_pk_columns %}
+    {{ col.name }}: {{ col.base_type }} | None = None,
+{% endfor %}
+) -> {{ record_name }} | None:
+    """Update a {{ table_name }} record. Only non-None fields are updated."""
+    updates = []
+    params = []
+{% for col in non_pk_columns %}
+    if {{ col.name }} is not None:
+        updates.append("{{ col.name }} = %s")
+        params.append({{ col.name }})
+{% endfor %}
+    
+    if not updates:
+        return get_{{ table_name }}_by_{% for col in pk_columns %}{{ col.name }}{% if not loop.last %}_and_{% endif %}{% endfor %}(conn, {% for col in pk_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %})
+    
+{% for col in pk_columns %}
+    params.append({{ col.name }})
+{% endfor %}
+    
+    sql = f"""
+        UPDATE {{ table_name }}
+        SET {", ".join(updates)}
+        WHERE {% for col in pk_columns %}{{ col.name }} = %s{% if not loop.last %} AND {% endif %}{% endfor %}
+        RETURNING *
+    """
+    
+    cursor = conn.execute(sql, params)
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    return {{ record_name }}(**dict(row))
+
+
+{% endif %}
+{% if has_pk %}
+def delete_{{ table_name }}(
+    conn: Connection,
+{% for col in pk_columns %}
+    {{ col.name }}: {{ col.base_type }},
+{% endfor %}
+) -> bool:
+    """Delete a {{ table_name }} record. Returns True if deleted."""
+    cursor = conn.execute(
+        "DELETE FROM {{ table_name }} WHERE {% for col in pk_columns %}{{ col.name }} = %s{% if not loop.last %} AND {% endif %}{% endfor %}",
+        ({% for col in pk_columns %}{{ col.name }},{% endfor %}),
+    )
+    return cursor.rowcount > 0
+
+
+{% endif %}
+{% if has_pk and not has_auto_generated_pk and non_pk_columns %}
+def upsert_{{ table_name }}(
+    conn: Connection,
+{% for col in pk_columns %}
+    {{ col.name }}: {{ col.base_type }},
+{% endfor %}
+{% for col in non_pk_columns %}
+    {{ col.name }}: {{ col.base_type }} | None = None,
+{% endfor %}
+) -> {{ record_name }}:
+    """Insert or update a {{ table_name }} record."""
+    # Build column lists based on provided values
+    columns = [{% for col in pk_columns %}"{{ col.name }}", {% endfor %}]
+    values = [{% for col in pk_columns %}{{ col.name }}, {% endfor %}]
+    updates = []
+    
+{% for col in non_pk_columns %}
+    if {{ col.name }} is not None:
+        columns.append("{{ col.name }}")
+        values.append({{ col.name }})
+        updates.append("{{ col.name }} = EXCLUDED.{{ col.name }}")
+{% endfor %}
+    
+    placeholders = ", ".join(["%s"] * len(values))
+    columns_str = ", ".join(columns)
+    
+    if updates:
+        update_str = ", ".join(updates)
+        sql = f"""
+            INSERT INTO {{ table_name }} ({columns_str})
+            VALUES ({placeholders})
+            ON CONFLICT ({% for col in pk_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %}) DO UPDATE SET {update_str}
+            RETURNING *
+        """
+    else:
+        sql = f"""
+            INSERT INTO {{ table_name }} ({columns_str})
+            VALUES ({placeholders})
+            ON CONFLICT ({% for col in pk_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %}) DO NOTHING
+            RETURNING *
+        """
+    
+    cursor = conn.execute(sql, values)
+    row = cursor.fetchone()
+    
+    # If DO NOTHING was triggered and no row returned, fetch the existing row
+    if row is None:
+        return get_{{ table_name }}_by_{% for col in pk_columns %}{{ col.name }}{% if not loop.last %}_and_{% endif %}{% endfor %}(conn, {% for col in pk_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %})
+    
+    return {{ record_name }}(**dict(row))
+{% endif %}
