@@ -137,6 +137,32 @@ The following PostgreSQL types are **not currently supported**. If encountered, 
 
 - User-defined domain types
 
+## Edge Cases
+
+### Tables Without Primary Keys
+
+Tables without primary keys only generate `get_all` and `insert` functions. The following operations require a primary key and are skipped:
+
+- `get_by_*` - No unique identifier to look up by
+- `update` - No PK for WHERE clause
+- `delete` - No PK for WHERE clause
+- `upsert` - No PK for ON CONFLICT
+
+### Tables With All Default/Auto-Generated Columns
+
+When all columns have defaults or are auto-generated (e.g., a table with only `id SERIAL` and `created_at TIMESTAMP DEFAULT NOW()`), the `insert` function takes no parameters and uses `INSERT INTO table_name DEFAULT VALUES RETURNING *`.
+
+```python
+# Example: audit_log table with id SERIAL + created_at DEFAULT NOW()
+def insert_audit_log(conn: Connection) -> AuditLogRecord:
+    """Insert a new audit_log record."""
+    cursor = conn.execute(
+        "INSERT INTO audit_log DEFAULT VALUES RETURNING *",
+    )
+    row = cursor.fetchone()
+    return AuditLogRecord(**dict(row))
+```
+
 ## Adding Support for New Types
 
 To add support for a new PostgreSQL type:
