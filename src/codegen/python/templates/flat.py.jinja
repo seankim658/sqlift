@@ -76,6 +76,7 @@ def insert_{{ table.table_name }}(
 {% endfor %}
 ) -> {{ table.record_name }}:
     """Insert a new {{ table.table_name }} record."""
+{% if table.insert_columns %}
     cursor = conn.execute(
         """
         INSERT INTO {{ table.table_name }} ({% for col in table.insert_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %})
@@ -84,6 +85,11 @@ def insert_{{ table.table_name }}(
         """,
         ({% for col in table.insert_columns %}{{ col.name }},{% endfor %}),
     )
+{% else %}
+    cursor = conn.execute(
+        "INSERT INTO {{ table.table_name }} DEFAULT VALUES RETURNING *",
+    )
+{% endif %}
     row = cursor.fetchone()
     return {{ table.record_name }}(**dict(row))
 
@@ -235,6 +241,7 @@ class {{ table.class_name }}Repository:
 {% endfor %}
     ) -> {{ table.record_name }}:
         """Insert a new record."""
+{% if table.insert_columns %}
         cursor = self.conn.execute(
             """
             INSERT INTO {{ table.table_name }} ({% for col in table.insert_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %})
@@ -243,6 +250,11 @@ class {{ table.class_name }}Repository:
             """,
             ({% for col in table.insert_columns %}{{ col.name }},{% endfor %}),
         )
+{% else %}
+        cursor = self.conn.execute(
+            "INSERT INTO {{ table.table_name }} DEFAULT VALUES RETURNING *",
+        )
+{% endif %}
         row = cursor.fetchone()
         return {{ table.record_name }}(**dict(row))
 

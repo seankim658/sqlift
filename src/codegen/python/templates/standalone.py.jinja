@@ -48,6 +48,7 @@ def insert_{{ table_name }}(
 {% endfor %}
 ) -> {{ record_name }}:
     """Insert a new {{ table_name }} record."""
+{% if insert_columns %}
     cursor = conn.execute(
         """
         INSERT INTO {{ table_name }} ({% for col in insert_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %})
@@ -56,6 +57,11 @@ def insert_{{ table_name }}(
         """,
         ({% for col in insert_columns %}{{ col.name }},{% endfor %}),
     )
+{% else %}
+    cursor = conn.execute(
+        "INSERT INTO {{ table_name }} DEFAULT VALUES RETURNING *",
+    )
+{% endif %}
     row = cursor.fetchone()
     return {{ record_name }}(**dict(row))
 

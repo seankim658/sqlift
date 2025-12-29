@@ -52,6 +52,7 @@ class {{ class_name }}Repository:
 {% endfor %}
     ) -> {{ record_name }}:
         """Insert a new record."""
+{% if insert_columns %}
         cursor = self.conn.execute(
             """
             INSERT INTO {{ table_name }} ({% for col in insert_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %})
@@ -60,6 +61,11 @@ class {{ class_name }}Repository:
             """,
             ({% for col in insert_columns %}{{ col.name }},{% endfor %}),
         )
+{% else %}
+        cursor = self.conn.execute(
+            "INSERT INTO {{ table_name }} DEFAULT VALUES RETURNING *",
+        )
+{% endif %}
         row = cursor.fetchone()
         return {{ record_name }}(**dict(row))
 
