@@ -393,25 +393,63 @@ class {{ class_name }}Repository:
         return cursor.rowcount
 
     def batch_update(self, updates: list[{{ singular_class_name }}UpdateParams]) -> int:
-        """Update multiple records with individual values. Returns count updated."""
+        """Update multiple records with individual values.
+        
+        Uses a single UPDATE ... FROM VALUES query for efficiency.
+        """
         if not updates:
             return 0
 
-        updated_count = 0
-        for update in updates:
-            kwargs: dict[str, Any] = {
+        values: list[Any] = []
+        for u in updates:
 {%- for col in pk_columns %}
-                "{{ col.name }}": update.{{ col.name }},
+            values.append(u.{{ col.name }})
 {%- endfor %}
-            }
 {%- for col in non_pk_columns %}
-            if update.{{ col.name }} is not UNSET:
-                kwargs["{{ col.name }}"] = update.{{ col.name }}
+            values.append(u.{{ col.name }} is not UNSET)
+            values.append(u.{{ col.name }} if u.{{ col.name }} is not UNSET else None)
 {%- endfor %}
 
-            result = self.update(**kwargs)
-            if result is not None:
-                updated_count += 1
+        cols_per_row = {{ pk_columns | length }} + {{ non_pk_columns | length }} * 2
+        row_placeholders = sql.SQL("({})").format(
+            sql.SQL(", ").join([sql.Placeholder()] * cols_per_row)
+        )
+        all_placeholders = sql.SQL(", ").join([row_placeholders] * len(updates))
 
-        return updated_count
+        value_columns = sql.SQL(", ").join([
+{%- for col in pk_columns %}
+            sql.Identifier("{{ col.name }}"),
+{%- endfor %}
+{%- for col in non_pk_columns %}
+            sql.Identifier("_u_{{ col.name }}"),
+            sql.Identifier("{{ col.name }}"),
+{%- endfor %}
+        ])
+
+        set_clause = sql.SQL(", ").join([
+{%- for col in non_pk_columns %}
+            sql.SQL("{} = CASE WHEN v.{} THEN v.{} ELSE t.{} END").format(
+                sql.Identifier("{{ col.name }}"),
+                sql.Identifier("_u_{{ col.name }}"),
+                sql.Identifier("{{ col.name }}"),
+                sql.Identifier("{{ col.name }}"),
+            ),
+{%- endfor %}
+        ])
+
+        where_clause = sql.SQL(" AND ").join([
+{%- for col in pk_columns %}
+            sql.SQL("t.{} = v.{}").format(
+                sql.Identifier("{{ col.name }}"),
+                sql.Identifier("{{ col.name }}"),
+            ),
+{%- endfor %}
+        ])
+
+        query = sql.SQL(
+            "UPDATE {{ table_name }} AS t SET {} FROM (VALUES {}) AS v({}) WHERE {}"
+        ).format(set_clause, all_placeholders, value_columns, where_clause)
+
+        cursor = self.conn.execute(query, values)
+        return cursor.rowcount
 {% endif %}
