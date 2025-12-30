@@ -45,6 +45,37 @@ class UserRecord:
     nickname: str | None # NULL allowed
 ```
 
+### Update/Upsert Parameter Types
+
+For `update` and `upsert` functions, parameters use the `_Unset` sentinel type to support partial updates:
+
+| Column Type | Record Field Type | Update Parameter Type |
+| ----------- | ----------------- | --------------------- |
+| `NOT NULL`  | `T`               | `T \| _Unset`         |
+| `NULL`      | `T \| None`       | `T \| None \| _Unset` |
+
+This allows distinguishing between:
+
+- **Not passing a parameter** (field unchanged) - uses `UNSET` default
+- **Passing `None`** (set field to NULL) - for nullable columns
+- **Passing a value** (update the field)
+
+Example:
+
+```python
+def update_user(
+    conn: Connection,
+    id: int,                                    # PK - required
+    email: str | _Unset = UNSET,               # Non-nullable field
+    nickname: str | None | _Unset = UNSET,     # Nullable field
+) -> UserRecord | None:
+    ...
+
+# Usage:
+update_user(conn, id=1, email="new@example.com")  # Only update email
+update_user(conn, id=1, nickname=None)             # Set nickname to NULL
+```
+
 ### Array Types
 
 PostgreSQL arrays are mapped to Python `list[T]` where `T` is the element type:

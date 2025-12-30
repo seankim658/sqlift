@@ -7,6 +7,7 @@ Generate typed data access code from your database schema. No ORM just readable 
 - Introspects database schemas to extract tables, columns, and enums
 - Generates typed dataclasses/structs for type-safe records
 - Creates CRUD functions (`get_by_id`, `get_all`, `insert`, `update`, `delete`, `upsert`)
+- Supports partial updates with type-safe sentinel pattern
 - Supports custom enum types
 - Two output modes: library (one file per table) or flat (single file)
 - Two function styles: standalone functions or repository classes
@@ -24,21 +25,11 @@ Generate typed data access code from your database schema. No ORM just readable 
 
 ### Languages
 
-| Language   | Status       |
-| ---------- | ------------ |
+| Language   | Status    |
+| ---------- | --------- |
 | Python     | Supported |
 | TypeScript | Planned   |
 | Go         | Planned   |
-
-## Installation
-
-```bash
-# Install with PostgreSQL support
-cargo install sqlift --features postgres
-
-# Install with multiple database support (when available)
-cargo install sqlift --features postgres,mysql
-```
 
 ## Quick Start
 
@@ -65,7 +56,7 @@ sqlift postgres python
 
 ```python
 from psycopg import connect
-from database import UserRecord, get_user_by_id, insert_user
+from database import UserRecord, get_user_by_id, insert_user, update_user
 
 with connect("dbname=myapp user=postgres") as conn:
     # Insert a new user
@@ -73,6 +64,9 @@ with connect("dbname=myapp user=postgres") as conn:
 
     # Fetch by primary key
     user = get_user_by_id(conn, user.id)
+
+    # Partial update - only change email, leave other fields unchanged
+    user = update_user(conn, id=user.id, email="alice.new@example.com")
 
     conn.commit()
 ```
@@ -131,6 +125,7 @@ Creates a package with one file per table:
 ```
 database/
 ├── __init__.py
+├── _types.py       # UNSET sentinel for partial updates
 ├── enums.py        # If you have custom enums
 ├── users.py
 ├── orders.py
@@ -189,6 +184,23 @@ For each table, sqlift generates:
 | `upsert`      | Insert or update on conflict    | Yes\*       |
 
 \*`upsert` is only generated for tables with non-auto-generated primary keys (e.g., UUID or natural keys).
+
+## Partial Updates
+
+The `update` and `upsert` functions support **partial updates**, you only need to pass the fields you want to change. This is achieved using an `UNSET` sentinel value that distinguishes between "don't change this field" and "set this field to NULL".
+
+```python
+from database import update_user
+
+# Only update email - all other fields remain unchanged
+update_user(conn, id=1, email="new@example.com")
+
+# Set nickname to NULL explicitly (for nullable columns)
+update_user(conn, id=1, nickname=None)
+
+# Update multiple fields at once
+update_user(conn, id=1, email="new@example.com", name="New Name")
+```
 
 ## Documentation
 
