@@ -210,8 +210,9 @@ update_user(conn, id=1, email="new@example.com", name="New Name")
 
 ### New Operations
 
-- [ ] Batch operations (`insert_many`, `update_many`, `delete_many`)
-- [ ] Pagination helpers for `get_all` (limit/offset and cursor-based)
+- [x] Bulk operations (`bulk_insert`, `bulk_update`, `bulk_delete`)
+- [x] Batch update with individual values (`batch_update`)
+- [x] Pagination helpers (`get_all` with limit/offset, `get_*_page` with cursor-based)
 - [ ] Index-based lookups (`get_users_by_email` for unique indexes)
 - [ ] Foreign key relationship helpers
 
