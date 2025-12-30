@@ -254,21 +254,32 @@ impl PythonGenerator {
             })?;
 
         let ctx = minijinja::context! {
-            tables => schema.tables.iter().map(|t| {
-                let has_insert_params = !t.insert_columns().is_empty();
-                let has_update_params = !t.primary_key.is_empty() && !t.non_pk_columns().is_empty();
-                minijinja::context! {
-                    module_name => &t.name,
-                    record_name => format!("{}Record", t.singular_class_name()),
-                    insert_params_name => format!("{}InsertParams", t.singular_class_name()),
-                    update_params_name => format!("{}UpdateParams", t.singular_class_name()),
-                    has_insert_params => has_insert_params,
-                    has_update_params => has_update_params,
-                }
-            }).collect::<Vec<_>>(),
-            has_enums => !schema.enums.is_empty(),
-            enums => schema.enums.iter().map(|e| to_pascal_case(&e.name)).collect::<Vec<_>>(),
-        };
+                tables => schema.tables.iter().map(|t| {
+            let has_pk = !t.primary_key.is_empty();
+            let has_insert_params = !t.insert_columns().is_empty();
+            let has_update_params = has_pk && !t.non_pk_columns().is_empty();
+            let has_upsert = has_pk && !t.has_auto_generated_pk();
+
+            // Build the get_by function name suffix (e.g., "id" or "user_id_and_role_id")
+            let pk_suffix = t.primary_key.join("_and_");
+
+            minijinja::context! {
+                module_name => &t.name,
+                table_name => &t.name,
+                singular_name => t.singular_name(),
+                record_name => format!("{}Record", t.singular_class_name()),
+                insert_params_name => format!("{}InsertParams", t.singular_class_name()),
+                update_params_name => format!("{}UpdateParams", t.singular_class_name()),
+                has_pk => has_pk,
+                has_insert_params => has_insert_params,
+                has_update_params => has_update_params,
+                has_upsert => has_upsert,
+                pk_suffix => pk_suffix,
+            }
+        }).collect::<Vec<_>>(),
+        has_enums => !schema.enums.is_empty(),
+        enums => schema.enums.iter().map(|e| to_pascal_case(&e.name)).collect::<Vec<_>>(),
+            };
 
         template.render(ctx).map_err(|e| SqliftError::CodeGen {
             table: "__init__".to_string(),
