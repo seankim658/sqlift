@@ -255,9 +255,15 @@ impl PythonGenerator {
 
         let ctx = minijinja::context! {
             tables => schema.tables.iter().map(|t| {
+                let has_insert_params = !t.insert_columns().is_empty();
+                let has_update_params = !t.primary_key.is_empty() && !t.non_pk_columns().is_empty();
                 minijinja::context! {
                     module_name => &t.name,
                     record_name => format!("{}Record", t.singular_class_name()),
+                    insert_params_name => format!("{}InsertParams", t.singular_class_name()),
+                    update_params_name => format!("{}UpdateParams", t.singular_class_name()),
+                    has_insert_params => has_insert_params,
+                    has_update_params => has_update_params,
                 }
             }).collect::<Vec<_>>(),
             has_enums => !schema.enums.is_empty(),
@@ -303,6 +309,7 @@ impl PythonGenerator {
         Ok(minijinja::context! {
             table_name => &table.name,
             singular_name => table.singular_name(),
+            singular_class_name => table.singular_class_name(),
             record_name => format!("{}Record", table.singular_class_name()),
             class_name => table.singular_class_name(),
             columns => columns_ctx,

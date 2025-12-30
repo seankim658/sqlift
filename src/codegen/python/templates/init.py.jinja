@@ -9,7 +9,15 @@ from .enums import (
 )
 {% endif %}
 {%- for table in tables %}
-from .{{ table.module_name }} import {{ table.record_name }}
+from .{{ table.module_name }} import (
+    {{ table.record_name }},
+{%- if table.has_insert_params %}
+    {{ table.insert_params_name }},
+{%- endif %}
+{%- if table.has_update_params %}
+    {{ table.update_params_name }},
+{%- endif %}
+)
 {%- endfor %}
 
 __all__ = [
@@ -22,5 +30,11 @@ __all__ = [
 {%- endif %}
 {%- for table in tables %}
     "{{ table.record_name }}",
+{%- if table.has_insert_params %}
+    "{{ table.insert_params_name }}",
+{%- endif %}
+{%- if table.has_update_params %}
+    "{{ table.update_params_name }}",
+{%- endif %}
 {%- endfor %}
 ]
