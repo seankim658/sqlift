@@ -8,5 +8,5 @@ class {{ enum.name }}(str, Enum):
     """Enum for {{ enum.db_name }} database type."""
 {% for value in enum.values %}
     {{ value | upper }} = "{{ value }}"
-{% endfor %}
+{%- endfor %}
 {% endfor %}

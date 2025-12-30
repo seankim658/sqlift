@@ -53,6 +53,20 @@ impl Table {
         }
     }
 
+    /// Returns singular form of the table name in snake_case (basic heuristic)
+    pub fn singular_name(&self) -> String {
+        let name = &self.name;
+
+        // Basic singularization rules for snake_case names
+        if name.ends_with("ies") {
+            format!("{}y", &name[..name.len() - 3])
+        } else if name.ends_with('s') && !name.ends_with("ss") {
+            name[..name.len() - 1].to_string()
+        } else {
+            name.clone()
+        }
+    }
+
     /// Check if the primary key is auto-generated (SERIAL, BIGSERIAL, identity)
     ///
     /// Used to determine if upsert should be generated - tables with

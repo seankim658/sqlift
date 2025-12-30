@@ -1,23 +1,22 @@
 """Generated database access code."""
-
 {% if has_enums %}
 from .enums import (
-{% for enum in enums %}
+{%- for enum in enums %}
     {{ enum }},
-{% endfor %}
+{%- endfor %}
 )
 {% endif %}
-{% for table in tables %}
+{%- for table in tables %}
 from .{{ table.module_name }} import {{ table.record_name }}
-{% endfor %}
+{%- endfor %}
 
 __all__ = [
-{% if has_enums %}
-{% for enum in enums %}
+{%- if has_enums %}
+{%- for enum in enums %}
     "{{ enum }}",
-{% endfor %}
-{% endif %}
-{% for table in tables %}
+{%- endfor %}
+{%- endif %}
+{%- for table in tables %}
     "{{ table.record_name }}",
-{% endfor %}
+{%- endfor %}
 ]

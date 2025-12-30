@@ -67,7 +67,7 @@ impl PythonGenerator {
         let output_dir = &config.output_path;
 
         // Create output directory
-        // TODO : should we check parent directory exists like in flat
+        // TODO : shouldcheck parent directory exists like in flat
         fs::create_dir_all(output_dir)?;
         debug!(path = ?output_dir, "Created output directory");
 
@@ -277,6 +277,7 @@ impl PythonGenerator {
 
         Ok(minijinja::context! {
             table_name => &table.name,
+            singular_name => table.singular_name(),
             record_name => format!("{}Record", table.singular_class_name()),
             class_name => table.singular_class_name(),
             columns => columns_ctx,
