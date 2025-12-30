@@ -1,4 +1,6 @@
 """Generated database access code."""
+
+from ._types import UNSET, _Unset
 {% if has_enums %}
 from .enums import (
 {%- for enum in enums %}
@@ -11,6 +13,8 @@ from .{{ table.module_name }} import {{ table.record_name }}
 {%- endfor %}
 
 __all__ = [
+    "UNSET",
+    "_Unset",
 {%- if has_enums %}
 {%- for enum in enums %}
     "{{ enum }}",

@@ -34,6 +34,8 @@ impl PythonGenerator {
             .expect("Failed to load flat template");
         env.add_template("enum", include_str!("templates/enum.py.jinja"))
             .expect("Failed to load enum template");
+        env.add_template("types", include_str!("templates/types.py.jinja"))
+            .expect("Failed to load types template");
 
         Self { env }
     }
@@ -70,6 +72,12 @@ impl PythonGenerator {
         // TODO : shouldcheck parent directory exists like in flat
         fs::create_dir_all(output_dir)?;
         debug!(path = ?output_dir, "Created output directory");
+
+        // Generate _types.py with shared types
+        let types_code = self.render_types()?;
+        let types_path = output_dir.join("_types.py");
+        fs::write(&types_path, types_code)?;
+        debug!(path = ?types_path, "Generated _types.py");
 
         // Generate enum file if there are enums
         if !schema.enums.is_empty() {
@@ -124,6 +132,23 @@ impl PythonGenerator {
         info!(path = ?final_path, "Generated flat Python file");
 
         Ok(())
+    }
+
+    fn render_types(&self) -> Result<String, SqliftError> {
+        let template = self
+            .env
+            .get_template("types")
+            .map_err(|e| SqliftError::CodeGen {
+                table: "_types".to_string(),
+                message: format!("Template error: {}", e),
+            })?;
+
+        template
+            .render(minijinja::context! {})
+            .map_err(|e| SqliftError::CodeGen {
+                table: "_types".to_string(),
+                message: format!("Render error: {}", e),
+            })
     }
 
     /// Render enums file
@@ -293,10 +318,19 @@ impl PythonGenerator {
 
 /// Build template context for a column
 fn build_column_context(col: &Column, schema: &Schema) -> minijinja::Value {
+    let base_type = python_type(&col.data_type, false, schema);
+
+    let update_type = if col.is_nullable {
+        format!("{} | None | _Unset", base_type)
+    } else {
+        format!("{} | _Unset", base_type)
+    };
+
     minijinja::context! {
         name => &col.name,
         python_type => python_type(&col.data_type, col.is_nullable, schema),
-        base_type => python_type(&col.data_type, false, schema),
+        base_type => base_type,
+        update_type => update_type,
         is_nullable => col.is_nullable,
         has_default => col.has_default,
         is_auto_generated => col.is_auto_generated,

@@ -8,6 +8,8 @@ from typing import Any
 from psycopg import Connection
 from psycopg import sql
 
+from ._types import UNSET, _Unset
+
 
 @dataclass
 class {{ record_name }}:
@@ -77,14 +79,18 @@ def update_{{ singular_name }}(
     {{ col.name }}: {{ col.base_type }},
 {%- endfor %}
 {%- for col in non_pk_columns %}
-    {{ col.name }}: {{ col.base_type }} | None = None,
+    {{ col.name }}: {{ col.update_type }} = UNSET,
 {%- endfor %}
 ) -> {{ record_name }} | None:
-    """Update a {{ singular_name }} record. Only non-None fields are updated."""
+    """Update a {{ singular_name }} record.
+    
+    Only fields with values other than UNSET are updated.
+    Pass None explicitly to set a nullable field to NULL.
+    """
     set_clauses: list[sql.Composed] = []
     params: list[Any] = []
 {% for col in non_pk_columns %}
-    if {{ col.name }} is not None:
+    if {{ col.name }} is not UNSET:
         set_clauses.append(sql.SQL("{} = %s").format(sql.Identifier("{{ col.name }}")))
         params.append({{ col.name }})
 {%- endfor %}
@@ -130,16 +136,20 @@ def upsert_{{ singular_name }}(
     {{ col.name }}: {{ col.base_type }},
 {%- endfor %}
 {%- for col in non_pk_columns %}
-    {{ col.name }}: {{ col.base_type }} | None = None,
+    {{ col.name }}: {{ col.update_type }} = UNSET,
 {%- endfor %}
 ) -> {{ record_name }}:
-    """Insert or update a {{ singular_name }} record."""
+    """Insert or update a {{ singular_name }} record.
+    
+    Only fields with values other than UNSET are included in the insert/update.
+    Pass None explicitly to set a nullable field to NULL.
+    """
     # Build column and value lists
     columns: list[sql.Identifier] = [{% for col in pk_columns %}sql.Identifier("{{ col.name }}"), {% endfor %}]
     values: list[Any] = [{% for col in pk_columns %}{{ col.name }}, {% endfor %}]
     update_clauses: list[sql.Composed] = []
 {% for col in non_pk_columns %}
-    if {{ col.name }} is not None:
+    if {{ col.name }} is not UNSET:
         columns.append(sql.Identifier("{{ col.name }}"))
         values.append({{ col.name }})
         update_clauses.append(sql.SQL("{} = EXCLUDED.{}").format(

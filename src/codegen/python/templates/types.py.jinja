@@ -1,0 +1,27 @@
+"""Shared types for generated database code."""
+
+
+class _Unset:
+    """Sentinel value indicating a parameter was not provided.
+    
+    Use UNSET as the default for optional update parameters to distinguish
+    between "don't update this field" and "set this field to None/NULL".
+    
+    Example:
+        # Skip updating nickname entirely
+        update_user(conn, id=1, nickname=UNSET)
+        
+        # Explicitly set nickname to NULL
+        update_user(conn, id=1, nickname=None)
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "UNSET"
+
+    def __bool__(self) -> bool:
+        return False
+
+
+UNSET: _Unset = _Unset()
