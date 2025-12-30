@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 {% for imp in imports -%}
 {{ imp }}
 {% endfor -%}
@@ -10,24 +10,8 @@ from psycopg import Connection
 from psycopg import sql
 
 
-# =============================================================================
-# Shared Types
-# =============================================================================
-
-
 class _Unset:
-    """Sentinel value indicating a parameter was not provided.
-    
-    Use UNSET as the default for optional update parameters to distinguish
-    between "don't update this field" and "set this field to None/NULL".
-    
-    Example:
-        # Skip updating nickname entirely
-        update_user(conn, id=1, nickname=UNSET)
-        
-        # Explicitly set nickname to NULL
-        update_user(conn, id=1, nickname=None)
-    """
+    """Sentinel value indicating a parameter was not provided."""
 
     __slots__ = ()
 
@@ -40,10 +24,6 @@ class _Unset:
 
 UNSET: _Unset = _Unset()
 
-
-# =============================================================================
-# Enums
-# =============================================================================
 {% for enum in enums %}
 
 class {{ enum.name }}(str, Enum):
@@ -53,11 +33,17 @@ class {{ enum.name }}(str, Enum):
 {%- endfor %}
 {% endfor %}
 
-
-# =============================================================================
-# Records
-# =============================================================================
 {% for table in tables %}
+# =============================================================================
+# {{ table.table_name }}
+# =============================================================================
+
+_{{ table.table_name | upper }}_COLUMNS: frozenset[str] = frozenset({
+{%- for col in table.columns %}
+    "{{ col.name }}",
+{%- endfor %}
+})
+
 
 @dataclass
 class {{ table.record_name }}:
@@ -65,16 +51,35 @@ class {{ table.record_name }}:
 {% for col in table.columns %}
     {{ col.name }}: {{ col.python_type }}
 {%- endfor %}
-{% endfor %}
 
 
-# =============================================================================
-# Data Access Functions
-# =============================================================================
-{% for table in tables %}
+{% if table.insert_columns -%}
+@dataclass
+class {{ table.singular_class_name }}InsertParams:
+    """Parameters for inserting a {{ table.singular_name }} record."""
+{%- for col in table.insert_columns %}
+{%- if col.is_nullable %}
+    {{ col.name }}: {{ col.python_type }} = None
+{%- else %}
+    {{ col.name }}: {{ col.python_type }}
+{%- endif %}
+{%- endfor %}
 
-# --- {{ table.table_name }} ---
 
+{% endif -%}
+{% if table.has_pk and table.non_pk_columns -%}
+@dataclass
+class {{ table.singular_class_name }}UpdateParams:
+    """Parameters for batch updating a {{ table.singular_name }} record."""
+{%- for col in table.pk_columns %}
+    {{ col.name }}: {{ col.base_type }}
+{%- endfor %}
+{%- for col in table.non_pk_columns %}
+    {{ col.name }}: {{ col.update_type }} = UNSET
+{%- endfor %}
+
+
+{% endif -%}
 {% if function_style == "standalone" -%}
 {% if table.has_pk -%}
 def get_{{ table.singular_name }}_by_{% for col in table.pk_columns %}{{ col.name }}{% if not loop.last %}_and_{% endif %}{% endfor %}(
@@ -95,33 +100,76 @@ def get_{{ table.singular_name }}_by_{% for col in table.pk_columns %}{{ col.nam
 
 
 {% endif -%}
-def get_all_{{ table.table_name }}(conn: Connection) -> list[{{ table.record_name }}]:
+def get_all_{{ table.table_name }}(
+    conn: Connection,
+    limit: int | None = None,
+    offset: int | None = None,
+) -> list[{{ table.record_name }}]:
     """Get all {{ table.table_name }} records."""
-    cursor = conn.execute("SELECT * FROM {{ table.table_name }}")
+    query = "SELECT * FROM {{ table.table_name }}"
+    params: list[Any] = []
+
+    if limit is not None:
+        query += " LIMIT %s"
+        params.append(limit)
+    if offset is not None:
+        query += " OFFSET %s"
+        params.append(offset)
+
+    cursor = conn.execute(query, params)
     rows = cursor.fetchall()
     return [{{ table.record_name }}(**dict(row)) for row in rows]
 
 
+{% if table.has_pk -%}
+def get_{{ table.table_name }}_page(
+    conn: Connection,
+    limit: int = 100,
+    sort_column: str = "{{ table.pk_columns[0].name }}",
+    sort_direction: Literal["asc", "desc"] = "asc",
+    after: Any = None,
+) -> list[{{ table.record_name }}]:
+    """Get a page of {{ table.table_name }} using cursor-based pagination."""
+    if sort_column not in _{{ table.table_name | upper }}_COLUMNS:
+        raise ValueError(f"Invalid sort column: {sort_column}")
+
+    order = "ASC" if sort_direction == "asc" else "DESC"
+    comparator = ">" if sort_direction == "asc" else "<"
+
+    if after is not None:
+        query = sql.SQL(
+            "SELECT * FROM {{ table.table_name }} WHERE {} {} %s ORDER BY {} {} LIMIT %s"
+        ).format(sql.Identifier(sort_column), sql.SQL(comparator), sql.Identifier(sort_column), sql.SQL(order))
+        cursor = conn.execute(query, (after, limit))
+    else:
+        query = sql.SQL("SELECT * FROM {{ table.table_name }} ORDER BY {} {} LIMIT %s").format(
+            sql.Identifier(sort_column), sql.SQL(order)
+        )
+        cursor = conn.execute(query, (limit,))
+
+    rows = cursor.fetchall()
+    return [{{ table.record_name }}(**dict(row)) for row in rows]
+
+
+{% endif -%}
 def insert_{{ table.singular_name }}(
     conn: Connection,
 {%- for col in table.insert_columns %}
+{%- if col.is_nullable %}
+    {{ col.name }}: {{ col.python_type }} = None,
+{%- else %}
     {{ col.name }}: {{ col.python_type }},
+{%- endif %}
 {%- endfor %}
 ) -> {{ table.record_name }}:
     """Insert a new {{ table.singular_name }} record."""
 {% if table.insert_columns %}
     cursor = conn.execute(
-        """
-        INSERT INTO {{ table.table_name }} ({% for col in table.insert_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %})
-        VALUES ({% for col in table.insert_columns %}%s{% if not loop.last %}, {% endif %}{% endfor %})
-        RETURNING *
-        """,
+        "INSERT INTO {{ table.table_name }} ({% for col in table.insert_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %}) VALUES ({% for col in table.insert_columns %}%s{% if not loop.last %}, {% endif %}{% endfor %}) RETURNING *",
         ({% for col in table.insert_columns %}{{ col.name }}, {% endfor %}),
     )
 {% else %}
-    cursor = conn.execute(
-        "INSERT INTO {{ table.table_name }} DEFAULT VALUES RETURNING *",
-    )
+    cursor = conn.execute("INSERT INTO {{ table.table_name }} DEFAULT VALUES RETURNING *")
 {% endif %}
     row = cursor.fetchone()
     if row is None:
@@ -139,11 +187,7 @@ def update_{{ table.singular_name }}(
     {{ col.name }}: {{ col.update_type }} = UNSET,
 {%- endfor %}
 ) -> {{ table.record_name }} | None:
-    """Update a {{ table.singular_name }} record.
-    
-    Only fields with values other than UNSET are updated.
-    Pass None explicitly to set a nullable field to NULL.
-    """
+    """Update a {{ table.singular_name }} record."""
     set_clauses: list[sql.Composed] = []
     params: list[Any] = []
 {% for col in table.non_pk_columns %}
@@ -158,10 +202,7 @@ def update_{{ table.singular_name }}(
     params.append({{ col.name }})
 {%- endfor %}
 
-    query = sql.SQL("UPDATE {{ table.table_name }} SET {} WHERE {% for col in table.pk_columns %}{{ col.name }} = %s{% if not loop.last %} AND {% endif %}{% endfor %} RETURNING *").format(
-        sql.SQL(", ").join(set_clauses)
-    )
-
+    query = sql.SQL("UPDATE {{ table.table_name }} SET {} WHERE {% for col in table.pk_columns %}{{ col.name }} = %s{% if not loop.last %} AND {% endif %}{% endfor %} RETURNING *").format(sql.SQL(", ").join(set_clauses))
     cursor = conn.execute(query, params)
     row = cursor.fetchone()
     if row is None:
@@ -177,7 +218,7 @@ def delete_{{ table.singular_name }}(
     {{ col.name }}: {{ col.base_type }},
 {%- endfor %}
 ) -> bool:
-    """Delete a {{ table.singular_name }} record. Returns True if deleted."""
+    """Delete a {{ table.singular_name }} record."""
     cursor = conn.execute(
         "DELETE FROM {{ table.table_name }} WHERE {% for col in table.pk_columns %}{{ col.name }} = %s{% if not loop.last %} AND {% endif %}{% endfor %}",
         ({% for col in table.pk_columns %}{{ col.name }},{% endfor %}),
@@ -196,12 +237,7 @@ def upsert_{{ table.singular_name }}(
     {{ col.name }}: {{ col.update_type }} = UNSET,
 {%- endfor %}
 ) -> {{ table.record_name }}:
-    """Insert or update a {{ table.singular_name }} record.
-    
-    Only fields with values other than UNSET are included in the insert/update.
-    Pass None explicitly to set a nullable field to NULL.
-    """
-    # Build column and value lists
+    """Insert or update a {{ table.singular_name }} record."""
     columns: list[sql.Identifier] = [{% for col in table.pk_columns %}sql.Identifier("{{ col.name }}"), {% endfor %}]
     values: list[Any] = [{% for col in table.pk_columns %}{{ col.name }}, {% endfor %}]
     update_clauses: list[sql.Composed] = []
@@ -209,212 +245,157 @@ def upsert_{{ table.singular_name }}(
     if {{ col.name }} is not UNSET:
         columns.append(sql.Identifier("{{ col.name }}"))
         values.append({{ col.name }})
-        update_clauses.append(sql.SQL("{} = EXCLUDED.{}").format(
-            sql.Identifier("{{ col.name }}"),
-            sql.Identifier("{{ col.name }}")
-        ))
+        update_clauses.append(sql.SQL("{} = EXCLUDED.{}").format(sql.Identifier("{{ col.name }}"), sql.Identifier("{{ col.name }}")))
 {%- endfor %}
 
-    # Build placeholders
     placeholders = sql.SQL(", ").join([sql.Placeholder()] * len(values))
     columns_sql = sql.SQL(", ").join(columns)
 
     if update_clauses:
-        query = sql.SQL(
-            "INSERT INTO {{ table.table_name }} ({}) VALUES ({}) "
-            "ON CONFLICT ({% for col in table.pk_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %}) DO UPDATE SET {} "
-            "RETURNING *"
-        ).format(columns_sql, placeholders, sql.SQL(", ").join(update_clauses))
+        query = sql.SQL("INSERT INTO {{ table.table_name }} ({}) VALUES ({}) ON CONFLICT ({% for col in table.pk_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %}) DO UPDATE SET {} RETURNING *").format(columns_sql, placeholders, sql.SQL(", ").join(update_clauses))
     else:
-        query = sql.SQL(
-            "INSERT INTO {{ table.table_name }} ({}) VALUES ({}) "
-            "ON CONFLICT ({% for col in table.pk_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %}) DO NOTHING "
-            "RETURNING *"
-        ).format(columns_sql, placeholders)
+        query = sql.SQL("INSERT INTO {{ table.table_name }} ({}) VALUES ({}) ON CONFLICT ({% for col in table.pk_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %}) DO NOTHING RETURNING *").format(columns_sql, placeholders)
 
     cursor = conn.execute(query, values)
     row = cursor.fetchone()
-
     if row is None:
         existing = get_{{ table.singular_name }}_by_{% for col in table.pk_columns %}{{ col.name }}{% if not loop.last %}_and_{% endif %}{% endfor %}(conn, {% for col in table.pk_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %})
         if existing is None:
-            raise RuntimeError("Upsert failed: record not found after conflict")
+            raise RuntimeError("Upsert failed")
         return existing
-
     return {{ table.record_name }}(**dict(row))
 
 
 {% endif -%}
+{% if table.insert_columns -%}
+def bulk_insert_{{ table.table_name }}(conn: Connection, records: list[{{ table.singular_class_name }}InsertParams]) -> int:
+    """Insert multiple {{ table.table_name }} records."""
+    if not records:
+        return 0
+
+    columns = [{% for col in table.insert_columns %}"{{ col.name }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+    columns_sql = sql.SQL(", ").join([sql.Identifier(c) for c in columns])
+
+    values: list[Any] = []
+    placeholders_list: list[sql.Composed] = []
+    for record in records:
+        values.extend(({% for col in table.insert_columns %}record.{{ col.name }}, {% endfor %}))
+        placeholders_list.append(sql.SQL("({})").format(sql.SQL(", ").join([sql.Placeholder()] * {{ table.insert_columns | length }})))
+
+    query = sql.SQL("INSERT INTO {{ table.table_name }} ({}) VALUES {}").format(columns_sql, sql.SQL(", ").join(placeholders_list))
+    cursor = conn.execute(query, values)
+    return cursor.rowcount
+
+
+{% endif -%}
+{% if table.has_pk -%}
+def bulk_delete_{{ table.table_name }}(
+    conn: Connection,
+{%- if table.pk_columns | length == 1 %}
+    {{ table.pk_columns[0].name }}s: list[{{ table.pk_columns[0].base_type }}],
+{%- else %}
+    pks: list[tuple[{% for col in table.pk_columns %}{{ col.base_type }}{% if not loop.last %}, {% endif %}{% endfor %}]],
+{%- endif %}
+) -> int:
+    """Delete multiple {{ table.table_name }} records."""
+{%- if table.pk_columns | length == 1 %}
+    if not {{ table.pk_columns[0].name }}s:
+        return 0
+    cursor = conn.execute("DELETE FROM {{ table.table_name }} WHERE {{ table.pk_columns[0].name }} = ANY(%s)", (list({{ table.pk_columns[0].name }}s),))
+{%- else %}
+    if not pks:
+        return 0
+    conditions: list[sql.Composed] = []
+    params: list[Any] = []
+    for pk in pks:
+        conditions.append(sql.SQL("({% for col in table.pk_columns %}{{ col.name }} = %s{% if not loop.last %} AND {% endif %}{% endfor %})"))
+        params.extend(pk)
+    query = sql.SQL("DELETE FROM {{ table.table_name }} WHERE {}").format(sql.SQL(" OR ").join(conditions))
+    cursor = conn.execute(query, params)
+{%- endif %}
+    return cursor.rowcount
+
+
+{% endif -%}
+{% if table.has_pk and table.non_pk_columns -%}
+def bulk_update_{{ table.table_name }}(
+    conn: Connection,
+{%- if table.pk_columns | length == 1 %}
+    {{ table.pk_columns[0].name }}s: list[{{ table.pk_columns[0].base_type }}],
+{%- else %}
+    pks: list[tuple[{% for col in table.pk_columns %}{{ col.base_type }}{% if not loop.last %}, {% endif %}{% endfor %}]],
+{%- endif %}
+{%- for col in table.non_pk_columns %}
+    {{ col.name }}: {{ col.update_type }} = UNSET,
+{%- endfor %}
+) -> int:
+    """Update multiple {{ table.table_name }} records with the same values."""
+{%- if table.pk_columns | length == 1 %}
+    if not {{ table.pk_columns[0].name }}s:
+        return 0
+{%- else %}
+    if not pks:
+        return 0
+{%- endif %}
+
+    set_clauses: list[sql.Composed] = []
+    params: list[Any] = []
+{% for col in table.non_pk_columns %}
+    if {{ col.name }} is not UNSET:
+        set_clauses.append(sql.SQL("{} = %s").format(sql.Identifier("{{ col.name }}")))
+        params.append({{ col.name }})
+{%- endfor %}
+
+    if not set_clauses:
+        return 0
+
+{%- if table.pk_columns | length == 1 %}
+    params.append(list({{ table.pk_columns[0].name }}s))
+    query = sql.SQL("UPDATE {{ table.table_name }} SET {} WHERE {{ table.pk_columns[0].name }} = ANY(%s)").format(sql.SQL(", ").join(set_clauses))
+{%- else %}
+    conditions: list[sql.Composed] = []
+    for pk in pks:
+        conditions.append(sql.SQL("({% for col in table.pk_columns %}{{ col.name }} = %s{% if not loop.last %} AND {% endif %}{% endfor %})"))
+        params.extend(pk)
+    query = sql.SQL("UPDATE {{ table.table_name }} SET {} WHERE {}").format(sql.SQL(", ").join(set_clauses), sql.SQL(" OR ").join(conditions))
+{%- endif %}
+    cursor = conn.execute(query, params)
+    return cursor.rowcount
+
+
+def batch_update_{{ table.table_name }}(conn: Connection, updates: list[{{ table.singular_class_name }}UpdateParams]) -> int:
+    """Update multiple {{ table.table_name }} records with individual values."""
+    if not updates:
+        return 0
+
+    updated_count = 0
+    for update in updates:
+        kwargs: dict[str, Any] = {
+{%- for col in table.pk_columns %}
+            "{{ col.name }}": update.{{ col.name }},
+{%- endfor %}
+        }
+{%- for col in table.non_pk_columns %}
+        if update.{{ col.name }} is not UNSET:
+            kwargs["{{ col.name }}"] = update.{{ col.name }}
+{%- endfor %}
+        result = update_{{ table.singular_name }}(conn, **kwargs)
+        if result is not None:
+            updated_count += 1
+    return updated_count
+
+
+{% endif -%}
 {% else %}
-{# Class style - generate repository classes #}
+{# Class style #}
 class {{ table.class_name }}Repository:
     """Repository for {{ table.table_name }} operations."""
 
     def __init__(self, conn: Connection) -> None:
         self.conn = conn
 
-{% if table.has_pk %}
-    def get_by_{% for col in table.pk_columns %}{{ col.name }}{% if not loop.last %}_and_{% endif %}{% endfor %}(
-        self,
-{%- for col in table.pk_columns %}
-        {{ col.name }}: {{ col.base_type }},
-{%- endfor %}
-    ) -> {{ table.record_name }} | None:
-        """Get a record by primary key."""
-        cursor = self.conn.execute(
-            "SELECT * FROM {{ table.table_name }} WHERE {% for col in table.pk_columns %}{{ col.name }} = %s{% if not loop.last %} AND {% endif %}{% endfor %}",
-            ({% for col in table.pk_columns %}{{ col.name }},{% endfor %}),
-        )
-        row = cursor.fetchone()
-        if row is None:
-            return None
-        return {{ table.record_name }}(**dict(row))
+    # TODO: Add class methods (similar to standalone but as methods)
+    pass
 
-{% endif %}
-    def get_all(self) -> list[{{ table.record_name }}]:
-        """Get all records."""
-        cursor = self.conn.execute("SELECT * FROM {{ table.table_name }}")
-        rows = cursor.fetchall()
-        return [{{ table.record_name }}(**dict(row)) for row in rows]
-
-    def insert(
-        self,
-{%- for col in table.insert_columns %}
-        {{ col.name }}: {{ col.python_type }},
-{%- endfor %}
-    ) -> {{ table.record_name }}:
-        """Insert a new record."""
-{% if table.insert_columns %}
-        cursor = self.conn.execute(
-            """
-            INSERT INTO {{ table.table_name }} ({% for col in table.insert_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %})
-            VALUES ({% for col in table.insert_columns %}%s{% if not loop.last %}, {% endif %}{% endfor %})
-            RETURNING *
-            """,
-            ({% for col in table.insert_columns %}{{ col.name }}, {% endfor %}),
-        )
-{% else %}
-        cursor = self.conn.execute(
-            "INSERT INTO {{ table.table_name }} DEFAULT VALUES RETURNING *",
-        )
-{% endif %}
-        row = cursor.fetchone()
-        if row is None:
-            raise RuntimeError("Insert did not return a row")
-        return {{ table.record_name }}(**dict(row))
-
-{% if table.has_pk and table.non_pk_columns %}
-    def update(
-        self,
-{%- for col in table.pk_columns %}
-        {{ col.name }}: {{ col.base_type }},
-{%- endfor %}
-{%- for col in table.non_pk_columns %}
-        {{ col.name }}: {{ col.update_type }} = UNSET,
-{%- endfor %}
-    ) -> {{ table.record_name }} | None:
-        """Update a record.
-        
-        Only fields with values other than UNSET are updated.
-        Pass None explicitly to set a nullable field to NULL.
-        """
-        set_clauses: list[sql.Composed] = []
-        params: list[Any] = []
-{% for col in table.non_pk_columns %}
-        if {{ col.name }} is not UNSET:
-            set_clauses.append(sql.SQL("{} = %s").format(sql.Identifier("{{ col.name }}")))
-            params.append({{ col.name }})
-{%- endfor %}
-
-        if not set_clauses:
-            return self.get_by_{% for col in table.pk_columns %}{{ col.name }}{% if not loop.last %}_and_{% endif %}{% endfor %}({% for col in table.pk_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %})
-{% for col in table.pk_columns %}
-        params.append({{ col.name }})
-{%- endfor %}
-
-        query = sql.SQL("UPDATE {{ table.table_name }} SET {} WHERE {% for col in table.pk_columns %}{{ col.name }} = %s{% if not loop.last %} AND {% endif %}{% endfor %} RETURNING *").format(
-            sql.SQL(", ").join(set_clauses)
-        )
-
-        cursor = self.conn.execute(query, params)
-        row = cursor.fetchone()
-        if row is None:
-            return None
-        return {{ table.record_name }}(**dict(row))
-
-{% endif %}
-{% if table.has_pk %}
-    def delete(
-        self,
-{%- for col in table.pk_columns %}
-        {{ col.name }}: {{ col.base_type }},
-{%- endfor %}
-    ) -> bool:
-        """Delete a record. Returns True if deleted."""
-        cursor = self.conn.execute(
-            "DELETE FROM {{ table.table_name }} WHERE {% for col in table.pk_columns %}{{ col.name }} = %s{% if not loop.last %} AND {% endif %}{% endfor %}",
-            ({% for col in table.pk_columns %}{{ col.name }},{% endfor %}),
-        )
-        return cursor.rowcount > 0
-
-{% endif %}
-{% if table.has_pk and not table.has_auto_generated_pk and table.non_pk_columns %}
-    def upsert(
-        self,
-{%- for col in table.pk_columns %}
-        {{ col.name }}: {{ col.base_type }},
-{%- endfor %}
-{%- for col in table.non_pk_columns %}
-        {{ col.name }}: {{ col.update_type }} = UNSET,
-{%- endfor %}
-    ) -> {{ table.record_name }}:
-        """Insert or update a record.
-        
-        Only fields with values other than UNSET are included in the insert/update.
-        Pass None explicitly to set a nullable field to NULL.
-        """
-        # Build column and value lists
-        columns: list[sql.Identifier] = [{% for col in table.pk_columns %}sql.Identifier("{{ col.name }}"), {% endfor %}]
-        values: list[Any] = [{% for col in table.pk_columns %}{{ col.name }}, {% endfor %}]
-        update_clauses: list[sql.Composed] = []
-{% for col in table.non_pk_columns %}
-        if {{ col.name }} is not UNSET:
-            columns.append(sql.Identifier("{{ col.name }}"))
-            values.append({{ col.name }})
-            update_clauses.append(sql.SQL("{} = EXCLUDED.{}").format(
-                sql.Identifier("{{ col.name }}"),
-                sql.Identifier("{{ col.name }}")
-            ))
-{%- endfor %}
-
-        # Build placeholders
-        placeholders = sql.SQL(", ").join([sql.Placeholder()] * len(values))
-        columns_sql = sql.SQL(", ").join(columns)
-
-        if update_clauses:
-            query = sql.SQL(
-                "INSERT INTO {{ table.table_name }} ({}) VALUES ({}) "
-                "ON CONFLICT ({% for col in table.pk_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %}) DO UPDATE SET {} "
-                "RETURNING *"
-            ).format(columns_sql, placeholders, sql.SQL(", ").join(update_clauses))
-        else:
-            query = sql.SQL(
-                "INSERT INTO {{ table.table_name }} ({}) VALUES ({}) "
-                "ON CONFLICT ({% for col in table.pk_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %}) DO NOTHING "
-                "RETURNING *"
-            ).format(columns_sql, placeholders)
-
-        cursor = self.conn.execute(query, values)
-        row = cursor.fetchone()
-
-        if row is None:
-            existing = self.get_by_{% for col in table.pk_columns %}{{ col.name }}{% if not loop.last %}_and_{% endif %}{% endfor %}({% for col in table.pk_columns %}{{ col.name }}{% if not loop.last %}, {% endif %}{% endfor %})
-            if existing is None:
-                raise RuntimeError("Upsert failed: record not found after conflict")
-            return existing
-
-        return {{ table.record_name }}(**dict(row))
-
-{% endif %}
 {% endif -%}
 {% endfor %}

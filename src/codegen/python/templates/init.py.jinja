@@ -9,7 +9,37 @@ from .enums import (
 )
 {% endif %}
 {%- for table in tables %}
-from .{{ table.module_name }} import {{ table.record_name }}
+from .{{ table.module_name }} import (
+    {{ table.record_name }},
+{%- if table.has_insert_params %}
+    {{ table.insert_params_name }},
+{%- endif %}
+{%- if table.has_update_params %}
+    {{ table.update_params_name }},
+{%- endif %}
+{%- if table.has_pk %}
+    get_{{ table.singular_name }}_by_{{ table.pk_suffix }},
+{%- endif %}
+    get_all_{{ table.table_name }},
+{%- if table.has_pk %}
+    get_{{ table.table_name }}_page,
+{%- endif %}
+    insert_{{ table.singular_name }},
+{%- if table.has_update_params %}
+    update_{{ table.singular_name }},
+    bulk_update_{{ table.table_name }},
+    batch_update_{{ table.table_name }},
+{%- endif %}
+{%- if table.has_pk %}
+    delete_{{ table.singular_name }},
+{%- endif %}
+{%- if table.has_upsert %}
+    upsert_{{ table.singular_name }},
+{%- endif %}
+{%- if table.has_insert_params %}
+    bulk_insert_{{ table.table_name }},
+{%- endif %}
+)
 {%- endfor %}
 
 __all__ = [
@@ -22,5 +52,33 @@ __all__ = [
 {%- endif %}
 {%- for table in tables %}
     "{{ table.record_name }}",
+{%- if table.has_insert_params %}
+    "{{ table.insert_params_name }}",
+{%- endif %}
+{%- if table.has_update_params %}
+    "{{ table.update_params_name }}",
+{%- endif %}
+{%- if table.has_pk %}
+    "get_{{ table.singular_name }}_by_{{ table.pk_suffix }}",
+{%- endif %}
+    "get_all_{{ table.table_name }}",
+{%- if table.has_pk %}
+    "get_{{ table.table_name }}_page",
+{%- endif %}
+    "insert_{{ table.singular_name }}",
+{%- if table.has_update_params %}
+    "update_{{ table.singular_name }}",
+    "bulk_update_{{ table.table_name }}",
+    "batch_update_{{ table.table_name }}",
+{%- endif %}
+{%- if table.has_pk %}
+    "delete_{{ table.singular_name }}",
+{%- endif %}
+{%- if table.has_upsert %}
+    "upsert_{{ table.singular_name }}",
+{%- endif %}
+{%- if table.has_insert_params %}
+    "bulk_insert_{{ table.table_name }}",
+{%- endif %}
 {%- endfor %}
 ]

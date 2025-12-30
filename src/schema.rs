@@ -94,10 +94,13 @@ impl Table {
     /// Get columns that should be parameters for insert
     /// (excludes auto-generated columns and columns with defaults)
     pub fn insert_columns(&self) -> Vec<&Column> {
-        self.columns
+        let mut cols: Vec<&Column> = self
+            .columns
             .iter()
             .filter(|col| !col.is_auto_generated && !col.has_default)
-            .collect()
+            .collect();
+        cols.sort_by_key(|col| col.is_nullable);
+        cols
     }
 
     /// Get non-primary-key columns (for update SET clause)
